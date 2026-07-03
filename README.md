@@ -38,6 +38,11 @@ $ bytebite peek mystery.blob
 [issues](../../issues). This repo is part of an automated tool-lab experiment
 (topic: `auto-tool-lab`).
 
+**Working now (M2):** `bytebite <file>` identifies a file by its magic bytes and
+prints the format, category, confidence, and matched byte range. It knows the
+common seed formats: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. The annotated
+hex `peek` (M3) and `--json` output (M5) are next.
+
 ## Install
 
 ```
@@ -53,14 +58,25 @@ cd bytebite
 python -m bytebite --help
 ```
 
-## Usage (planned v0.1)
+## Usage
 
 ```
-bytebite <file>          # identify a file
-bytebite peek <file>     # annotated hex view of the header
-bytebite <file> --json   # machine-readable output
-cat blob | bytebite -    # read from stdin
+bytebite <file>          # identify a file (working now)
+bytebite peek <file>     # annotated hex view of the header (planned, M3)
+bytebite <file> --json   # machine-readable output (planned, M5)
+cat blob | bytebite -    # read from stdin (planned, M4)
 ```
+
+Example:
+
+```
+$ bytebite mystery.blob
+🔍 PNG image  (category: image)   confidence: 94%
+   matched magic \x89PNG\x0d\x0a\x1a\x0a at offset 0x00–0x07
+   → Portable Network Graphics — lossless raster image.
+```
+
+Exit codes: `0` identified, `1` unidentified, `2` usage/I-O error.
 
 ## License
 
