@@ -1,8 +1,8 @@
-"""Smoke tests for the M1 scaffold.
+"""Smoke tests for the CLI scaffold and wiring.
 
-These verify the living skeleton is wired up correctly: version reporting, the
+These verify the skeleton is wired up correctly: version reporting, the
 help-on-no-args behaviour, and that the console entry point / ``python -m`` path
-resolve. Real behaviour tests arrive with the identification engine (M2+).
+resolve. Behaviour tests for identification live in ``test_cli_identify.py``.
 """
 
 from __future__ import annotations
