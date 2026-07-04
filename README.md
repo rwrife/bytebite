@@ -12,13 +12,16 @@ the header with the interesting parts *labeled*.
 
 ```
 $ bytebite mystery.blob
-🔍 PNG image  (category: image)   confidence: 99%
-   matched magic \x89PNG\r\n\x1a\n at offset 0x00
-   → Portable Network Graphics — lossless raster image
+🔍 PNG image  (category: image)   confidence: 94%
+   matched magic \x89PNG\x0d\x0a\x1a\x0a at offset 0x00–0x07
+   → Portable Network Graphics — lossless raster image.
 
 $ bytebite peek mystery.blob
-00000000  [89 50 4E 47 0D 0A 1A 0A] 00 00 00 0D 49 48 44 52  |.PNG........IHDR|
-          └── magic: PNG signature ──┘        └ IHDR chunk ┘
+🔦 hex peek — mystery.blob   showing 20 byte(s)
+   highlighting PNG image magic at 0x00–0x07
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+00000010  00 00 00 10                                       |....            |
+          ^^^^^^^^^^^^^^^^^^^^^^^ PNG image magic
 ```
 
 ## Why bytebite?
@@ -38,10 +41,13 @@ $ bytebite peek mystery.blob
 [issues](../../issues). This repo is part of an automated tool-lab experiment
 (topic: `auto-tool-lab`).
 
-**Working now (M2):** `bytebite <file>` identifies a file by its magic bytes and
-prints the format, category, confidence, and matched byte range. It knows the
-common seed formats: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. The annotated
-hex `peek` (M3) and `--json` output (M5) are next.
+**Working now (M3):** `bytebite <file>` identifies a file by its magic bytes and
+prints the format, category, confidence, and matched byte range. `bytebite peek
+<file>` renders an annotated hex view of the header with the recognised
+magic-byte range highlighted and labeled (colorized on a TTY, plain carets when
+piped or `NO_COLOR` is set; `--bytes N` controls how much is shown). It knows the
+common seed formats: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. Registry
+expansion + stdin (M4) and `--json` output (M5) are next.
 
 ## Install
 
@@ -62,18 +68,25 @@ python -m bytebite --help
 
 ```
 bytebite <file>          # identify a file (working now)
-bytebite peek <file>     # annotated hex view of the header (planned, M3)
+bytebite peek <file>     # annotated hex view of the header (working now)
+bytebite peek <file> -n 32  # show the first 32 bytes (default: 64)
 bytebite <file> --json   # machine-readable output (planned, M5)
 cat blob | bytebite -    # read from stdin (planned, M4)
 ```
 
-Example:
+Examples:
 
 ```
 $ bytebite mystery.blob
 🔍 PNG image  (category: image)   confidence: 94%
    matched magic \x89PNG\x0d\x0a\x1a\x0a at offset 0x00–0x07
    → Portable Network Graphics — lossless raster image.
+
+$ bytebite peek mystery.blob --bytes 16
+🔦 hex peek — mystery.blob   showing 16 byte(s) (of ≥20 read)
+   highlighting PNG image magic at 0x00–0x07
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+          ^^^^^^^^^^^^^^^^^^^^^^^ PNG image magic
 ```
 
 Exit codes: `0` identified, `1` unidentified, `2` usage/I-O error.
