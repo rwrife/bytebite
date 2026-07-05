@@ -6,8 +6,10 @@ adding a new format is a data edit, not a code change — that's the whole
 extensibility story from PLAN.md.
 
 M2 seeds the registry with the eight everyday formats called out in the
-milestone: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. Later milestones grow
-this to ~20 (M4) and attach field-level header layouts (M6).
+milestone: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. M4 grows the registry
+toward ~20 everyday formats (adding audio, more archives, databases, bytecode
+and a couple of image formats), and later milestones attach field-level header
+layouts (M6).
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ class Signature:
     name:
         Human-friendly format name, e.g. ``"PNG image"``.
     category:
-        Broad bucket — ``image``, ``archive``, ``executable``, ``document`` …
+        Broad bucket — ``image``, ``archive``, ``executable``, ``document``,
+        ``audio``, ``database`` …
     magic:
         The exact bytes we expect to find at ``offset``.
     offset:
@@ -150,6 +153,103 @@ SIGNATURES: List[Signature] = [
         category="executable",
         magic=b"MZ",
         description="DOS/PE executable (Windows .exe/.dll — MZ header).",
+    ),
+    # --- M4 additions -------------------------------------------------------
+    # More everyday formats: audio, databases, bytecode, extra archives and
+    # images. A couple use a non-zero offset (TAR's ``ustar`` sits at 257),
+    # which the matcher already handles.
+    Signature(
+        name="BMP image",
+        category="image",
+        magic=b"BM",
+        description="Windows/OS2 bitmap image (BM header).",
+    ),
+    Signature(
+        name="ICO icon",
+        category="image",
+        # Reserved(0000) + type 0001 (icon). CUR would be type 0002.
+        magic=b"\x00\x00\x01\x00",
+        description="Windows icon resource (ICO).",
+    ),
+    Signature(
+        name="WAV audio",
+        category="audio",
+        # RIFF container; bytes 8..11 spell WAVE. Masked middle four bytes are
+        # the (variable) chunk size, so they are treated as wildcards.
+        magic=b"RIFF\x00\x00\x00\x00WAVE",
+        mask=b"\xff\xff\xff\xff\x00\x00\x00\x00\xff\xff\xff\xff",
+        description="WAVE audio (RIFF/PCM container).",
+    ),
+    Signature(
+        name="MP3 audio",
+        category="audio",
+        magic=b"ID3",
+        description="MP3 audio with an ID3v2 metadata tag.",
+    ),
+    Signature(
+        name="MP3 audio",
+        category="audio",
+        # MPEG audio frame sync: 11 set bits. Second byte's low nibble varies
+        # (layer/version/protection), so mask it down to the sync bits.
+        magic=b"\xff\xe0",
+        mask=b"\xff\xe0",
+        description="MP3 audio (MPEG frame sync, no ID3 tag).",
+    ),
+    Signature(
+        name="SQLite database",
+        category="database",
+        magic=b"SQLite format 3\x00",
+        description="SQLite 3 database file.",
+    ),
+    Signature(
+        name="Parquet data",
+        category="database",
+        magic=b"PAR1",
+        description="Apache Parquet columnar data file.",
+    ),
+    Signature(
+        name="WebAssembly module",
+        category="executable",
+        magic=b"\x00asm",
+        description="WebAssembly binary module (wasm).",
+    ),
+    Signature(
+        name="Java class",
+        category="executable",
+        magic=b"\xca\xfe\xba\xbe",
+        description="Java compiled bytecode (.class — 0xCAFEBABE).",
+    ),
+    Signature(
+        name="TAR archive",
+        category="archive",
+        # POSIX ustar magic sits inside the first file header, not at byte 0.
+        magic=b"ustar",
+        offset=257,
+        description="POSIX tar archive (ustar).",
+    ),
+    Signature(
+        name="7-Zip archive",
+        category="archive",
+        magic=b"7z\xbc\xaf\x27\x1c",
+        description="7z archive.",
+    ),
+    Signature(
+        name="XZ archive",
+        category="archive",
+        magic=b"\xfd7zXZ\x00",
+        description="xz-compressed stream (LZMA2).",
+    ),
+    Signature(
+        name="BZIP2 archive",
+        category="archive",
+        magic=b"BZh",
+        description="bzip2-compressed stream.",
+    ),
+    Signature(
+        name="ZSTD archive",
+        category="archive",
+        magic=b"\x28\xb5\x2f\xfd",
+        description="Zstandard-compressed stream (zst).",
     ),
 ]
 

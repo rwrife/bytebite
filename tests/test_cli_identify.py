@@ -70,3 +70,37 @@ def test_no_color_env_strips_ansi(tmp_path, capsys, monkeypatch) -> None:
     cli.main([path])
     out = capsys.readouterr().out
     assert "\x1b[" not in out  # no ANSI escape sequences
+
+
+def test_identify_from_stdin_dash(tmp_path) -> None:
+    # ``bytebite -`` reads the blob from stdin (M4) and identifies it.
+    result = subprocess.run(
+        [sys.executable, "-m", "bytebite", "-"],
+        input=b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0d",
+        capture_output=True,
+    )
+    assert result.returncode == cli.EXIT_OK
+    assert b"PNG image" in result.stdout
+
+
+def test_identify_unknown_from_stdin_names_stdin() -> None:
+    # The unidentified message names the source, which for a pipe is <stdin>.
+    result = subprocess.run(
+        [sys.executable, "-m", "bytebite", "-"],
+        input=b"nothing recognisable in these bytes",
+        capture_output=True,
+    )
+    assert result.returncode == cli.EXIT_UNIDENTIFIED
+    assert b"unidentified" in result.stdout.lower()
+    assert b"<stdin>" in result.stdout
+
+
+def test_identify_empty_stdin_does_not_crash() -> None:
+    # Empty piped input must be handled gracefully (M4 tiny/empty safety).
+    result = subprocess.run(
+        [sys.executable, "-m", "bytebite", "-"],
+        input=b"",
+        capture_output=True,
+    )
+    assert result.returncode == cli.EXIT_UNIDENTIFIED
+    assert result.stderr == b"" or b"Traceback" not in result.stderr

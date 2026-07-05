@@ -10,6 +10,9 @@ hex view of the header with the recognised magic-byte range highlighted and
 labelled (``--bytes N`` controls how much is shown). ``--json`` output lands in
 M5; the plumbing here is kept deliberately small so it slots in cleanly.
 
+M4 adds stdin support: ``bytebite -`` (and ``bytebite peek -``) read the blob
+from standard input so bytebite composes in pipelines (``cat x | bytebite -``).
+
 Exit codes (stabilised further in M5):
     0  file identified (or peek rendered)
     1  file read but not identified
@@ -36,6 +39,19 @@ EXIT_UNIDENTIFIED = 1
 EXIT_ERROR = 2
 
 STDIN_DISPLAY = "<stdin>"
+STDIN_ARG = "-"
+# Internal placeholder so argparse doesn't treat a lone ``-`` as an optional.
+_STDIN_TOKEN = "\x00bytebite-stdin\x00"
+
+
+def _is_stdin(path: str) -> bool:
+    """Return ``True`` when ``path`` is the stdin sentinel (``-``)."""
+    return path == STDIN_ARG
+
+
+def _display_name(path: str) -> str:
+    """Human label for a source path (``-`` becomes ``<stdin>``)."""
+    return STDIN_DISPLAY if _is_stdin(path) else path
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -60,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "file",
         nargs="?",
-        help="path to the file to identify (omit to show this help)",
+        help="path to the file to identify, or '-' for stdin (omit to show help)",
     )
     return parser
 
@@ -73,7 +89,7 @@ def build_peek_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "file",
-        help="path to the file to peek at",
+        help="path to the file to peek at, or '-' for stdin",
     )
     parser.add_argument(
         "-n",
@@ -87,12 +103,19 @@ def build_peek_parser() -> argparse.ArgumentParser:
 
 
 def _read_head(path: str) -> Tuple[Optional[bytes], int]:
-    """Read a file's head, returning ``(head, exit_code)``.
+    """Read a source's head, returning ``(head, exit_code)``.
 
-    On success ``head`` is the bytes and the code is :data:`EXIT_OK`; on failure
-    ``head`` is ``None`` and the code is :data:`EXIT_ERROR` (a message has
-    already been printed to stderr).
+    ``path`` may be a filesystem path or ``-`` for standard input. On success
+    ``head`` is the bytes and the code is :data:`EXIT_OK`; on failure ``head``
+    is ``None`` and the code is :data:`EXIT_ERROR` (a message has already been
+    printed to stderr).
     """
+    if _is_stdin(path):
+        try:
+            return sys.stdin.buffer.read(HEAD_SIZE), EXIT_OK
+        except OSError as exc:  # pragma: no cover - stdin read errors are rare
+            print(f"{PROG}: <stdin>: {exc.strerror or exc}", file=sys.stderr)
+            return None, EXIT_ERROR
     try:
         with open(path, "rb") as fh:
             return fh.read(HEAD_SIZE), EXIT_OK
@@ -106,7 +129,7 @@ def _read_head(path: str) -> Tuple[Optional[bytes], int]:
 
 
 def _identify_file(path: str) -> int:
-    """Identify ``path`` and print the result. Returns a process exit code."""
+    """Identify ``path`` (or stdin when ``-``) and print. Returns exit code."""
     head, code = _read_head(path)
     if head is None:
         return code
@@ -115,15 +138,19 @@ def _identify_file(path: str) -> int:
     best = matches[0] if matches else None
     alternatives = matches[1:3] if len(matches) > 1 else None
 
-    print(render_identification(best, source=path, alternatives=alternatives))
+    print(render_identification(best, source=_display_name(path), alternatives=alternatives))
     return EXIT_OK if best is not None else EXIT_UNIDENTIFIED
 
 
 def _peek_file(argv: Sequence[str]) -> int:
-    """Handle ``bytebite peek <file> [--bytes N]``."""
-    args = build_peek_parser().parse_args(argv)
+    """Handle ``bytebite peek <file> [--bytes N]`` (``<file>`` may be ``-``)."""
+    # A bare ``-`` (stdin) at the end of the peek args would be misread by
+    # argparse as an unknown optional; swap in a sentinel we translate back.
+    normalized = [_STDIN_TOKEN if a == STDIN_ARG else a for a in argv]
+    args = build_peek_parser().parse_args(normalized)
+    source = STDIN_ARG if args.file == _STDIN_TOKEN else args.file
 
-    head, code = _read_head(args.file)
+    head, code = _read_head(source)
     if head is None:
         return code
 
@@ -135,7 +162,7 @@ def _peek_file(argv: Sequence[str]) -> int:
             head,
             best,
             bytes_shown=args.bytes,
-            source=args.file,
+            source=_display_name(source),
         )
     )
     # peek is a viewer: rendering succeeded, so exit 0 even for unknown blobs.
@@ -151,6 +178,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # bare ``bytebite <file>`` identify form stays the zero-ceremony default.
     if argv and argv[0] == "peek":
         return _peek_file(argv[1:])
+
+    # ``bytebite -`` reads from stdin. argparse would treat a lone ``-`` as an
+    # unknown optional, so intercept it here and route straight to identify.
+    if argv and argv[0] == STDIN_ARG:
+        return _identify_file(STDIN_ARG)
 
     parser = build_parser()
     args = parser.parse_args(argv)

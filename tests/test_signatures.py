@@ -79,9 +79,40 @@ def test_registry_covers_the_eight_seed_formats() -> None:
 
 
 def test_registry_categories_are_known() -> None:
-    known = {"image", "archive", "executable", "document"}
+    known = {"image", "archive", "executable", "document", "audio", "database"}
     for sig in SIGNATURES:
         assert sig.category in known, f"{sig.name} has odd category {sig.category!r}"
+
+
+def test_registry_reaches_m4_breadth() -> None:
+    # M4 grows the registry toward ~20 everyday formats. Assert both the raw
+    # signature count and the number of distinct format names clear that bar.
+    assert len(SIGNATURES) >= 20
+    assert len({s.name for s in SIGNATURES}) >= 20
+
+
+def test_registry_covers_the_m4_additions() -> None:
+    names = {s.name for s in SIGNATURES}
+    for expected in [
+        "WAV audio",
+        "MP3 audio",
+        "SQLite database",
+        "Parquet data",
+        "WebAssembly module",
+        "Java class",
+        "BMP image",
+        "TAR archive",
+        "7-Zip archive",
+        "XZ archive",
+        "ICO icon",
+    ]:
+        assert expected in names, f"missing M4 format: {expected}"
+
+
+def test_tar_signature_uses_the_ustar_offset() -> None:
+    tar = next(s for s in SIGNATURES if s.name == "TAR archive")
+    assert tar.offset == 257
+    assert tar.magic == b"ustar"
 
 
 def test_all_signatures_returns_readonly_tuple() -> None:

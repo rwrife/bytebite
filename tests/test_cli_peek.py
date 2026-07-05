@@ -105,3 +105,35 @@ def test_peek_via_subprocess(tmp_path) -> None:
     assert result.returncode == cli.EXIT_OK
     assert "ELF executable magic" in result.stdout
     assert "7f 45 4c 46" in result.stdout
+
+
+def test_peek_from_stdin_dash(tmp_path) -> None:
+    import os
+
+    # ``bytebite peek -`` renders an annotated dump of piped input (M4).
+    env = dict(os.environ, NO_COLOR="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "bytebite", "peek", "-", "--bytes", "16"],
+        input=b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0d",
+        capture_output=True,
+        env=env,
+    )
+    assert result.returncode == cli.EXIT_OK
+    assert b"hex peek" in result.stdout
+    assert b"<stdin>" in result.stdout
+    assert b"PNG image magic" in result.stdout
+
+
+def test_peek_empty_stdin_renders_no_bytes(tmp_path) -> None:
+    import os
+
+    env = dict(os.environ, NO_COLOR="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "bytebite", "peek", "-"],
+        input=b"",
+        capture_output=True,
+        env=env,
+    )
+    assert result.returncode == cli.EXIT_OK
+    assert b"no bytes to show" in result.stdout
+    assert b"Traceback" not in result.stderr

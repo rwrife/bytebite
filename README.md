@@ -22,6 +22,11 @@ $ bytebite peek mystery.blob
 00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
 00000010  00 00 00 10                                       |....            |
           ^^^^^^^^^^^^^^^^^^^^^^^ PNG image magic
+
+$ cat mystery.blob | bytebite -
+🔍 PNG image  (category: image)   confidence: 94%
+   matched magic \x89PNG\x0d\x0a\x1a\x0a at offset 0x00–0x07
+   → Portable Network Graphics — lossless raster image.
 ```
 
 ## Why bytebite?
@@ -41,13 +46,17 @@ $ bytebite peek mystery.blob
 [issues](../../issues). This repo is part of an automated tool-lab experiment
 (topic: `auto-tool-lab`).
 
-**Working now (M3):** `bytebite <file>` identifies a file by its magic bytes and
+**Working now (M4):** `bytebite <file>` identifies a file by its magic bytes and
 prints the format, category, confidence, and matched byte range. `bytebite peek
 <file>` renders an annotated hex view of the header with the recognised
 magic-byte range highlighted and labeled (colorized on a TTY, plain carets when
-piped or `NO_COLOR` is set; `--bytes N` controls how much is shown). It knows the
-common seed formats: PNG, JPEG, GIF, PDF, ZIP, GZIP, ELF and PE. Registry
-expansion + stdin (M4) and `--json` output (M5) are next.
+piped or `NO_COLOR` is set; `--bytes N` controls how much is shown). The registry
+now covers ~20 everyday formats — PNG, JPEG, GIF, BMP, ICO, PDF, ZIP, GZIP, XZ,
+BZIP2, ZSTD, 7-Zip, TAR (via its `ustar` header at offset 257), WAV, MP3,
+SQLite, Parquet, ELF, PE, Java class and WebAssembly. Both commands also read
+from **stdin** with `-`, so bytebite composes in pipelines
+(`cat mystery.blob | bytebite -`). Tiny and empty inputs are handled without
+crashing. `--json` output (M5) and field-level header annotation (M6) are next.
 
 ## Install
 
