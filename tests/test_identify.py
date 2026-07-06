@@ -20,7 +20,23 @@ FIXTURES = {
     "GZIP archive": b"\x1f\x8b\x08\x00\x00\x00\x00\x00",
     "ELF executable": b"\x7fELF\x02\x01\x01\x00",
     "PE executable": b"MZ\x90\x00\x03\x00\x00\x00",
+    # --- M4 formats -------------------------------------------------------
+    "BMP image": b"BM\x36\x00\x00\x00\x00\x00",
+    "ICO icon": b"\x00\x00\x01\x00\x01\x00\x10\x10",
+    "WAV audio": b"RIFF\x24\x08\x00\x00WAVEfmt ",
+    "SQLite database": b"SQLite format 3\x00",
+    "Parquet data": b"PAR1\x00\x00\x00\x00",
+    "WebAssembly module": b"\x00asm\x01\x00\x00\x00",
+    "Java class": b"\xca\xfe\xba\xbe\x00\x00\x00\x34",
+    "7-Zip archive": b"7z\xbc\xaf\x27\x1c\x00\x04",
+    "XZ archive": b"\xfd7zXZ\x00\x00\x00",
+    "ZSTD archive": b"\x28\xb5\x2f\xfd\x00\x00\x00\x00",
+    "BZIP2 archive": b"BZh9\x31\x41\x59\x26",
 }
+
+# TAR's ``ustar`` magic lives at offset 257, so its fixture needs a full first
+# file header of padding in front. Kept separate from the offset-0 FIXTURES.
+TAR_FIXTURE = b"./file.txt" + b"\x00" * 247 + b"ustar\x0000"
 
 
 def test_each_seed_format_is_identified() -> None:
@@ -30,6 +46,22 @@ def test_each_seed_format_is_identified() -> None:
         assert match.name == expected_name, (
             f"expected {expected_name}, got {match.name}"
         )
+
+
+def test_tar_identified_via_offset_magic() -> None:
+    match = best_match(TAR_FIXTURE)
+    assert match is not None
+    assert match.name == "TAR archive"
+    assert match.offset == 257
+    assert match.matched_bytes == b"ustar"
+
+
+def test_tiny_and_empty_inputs_do_not_crash() -> None:
+    # M4 guarantees graceful handling of tiny/empty files.
+    for head in (b"", b"M", b"\x00", b"PK", b"RIFF"):
+        # Must not raise; unknown-ish tiny inputs simply return no/what-matches.
+        result = identify(head)
+        assert isinstance(result, list)
 
 
 def test_confidence_is_in_unit_range_and_positive() -> None:
