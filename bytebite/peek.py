@@ -24,10 +24,10 @@ Design notes
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from .identify import Match
-from .render import color_enabled
+from .render import SCHEMA_VERSION, color_enabled, format_hex, result_dict
 
 # Layout constants. Kept module-level so tests can reason about them and a
 # future ``--width`` option has one obvious place to hook in.
@@ -80,6 +80,54 @@ def _spans_for_match(match: Optional[Match]) -> List[Span]:
         return []
     # Clamp defensively: a signature could, in principle, sit past what we show.
     return [Span(match.offset, match.end, f"{match.name} magic")]
+
+
+def peek_result_dict(
+    data: bytes,
+    match: Optional[Match] = None,
+    *,
+    bytes_shown: int = DEFAULT_BYTES,
+    source: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the machine-readable ``peek --json`` payload.
+
+    Extends the identification payload (:func:`bytebite.render.result_dict`)
+    with the dump metadata a scripter needs: how many bytes were shown, the raw
+    header as hex, and the labelled highlight spans (start/end/label + the hex
+    of each span). The identification block is reused verbatim so ``peek
+    --json`` and ``identify --json`` agree on what a match looks like. Shape is
+    versioned by :data:`~bytebite.render.SCHEMA_VERSION`.
+
+    Schema (in addition to the identification keys)::
+
+        {
+          ... result_dict keys ...,
+          "peek": {
+            "bytes_shown": int,
+            "total_read": int,
+            "hex": "<lowercase hex of the shown bytes>",
+            "spans": [ {"start": int, "end": int, "label": str, "hex": str} ]
+          }
+        }
+    """
+    view = data[: max(bytes_shown, 0)]
+    spans = _spans_for_match(match)
+    payload = result_dict(match, source=source)
+    payload["peek"] = {
+        "bytes_shown": len(view),
+        "total_read": len(data),
+        "hex": view.hex(),
+        "spans": [
+            {
+                "start": s.start,
+                "end": s.end,
+                "label": s.label,
+                "hex": data[s.start : s.end].hex(),
+            }
+            for s in spans
+        ],
+    }
+    return payload
 
 
 def _paint(text: str, *codes: str, enabled: bool) -> str:
