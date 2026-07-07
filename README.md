@@ -17,11 +17,16 @@ $ bytebite mystery.blob
    → Portable Network Graphics — lossless raster image.
 
 $ bytebite peek mystery.blob
-🔦 hex peek — mystery.blob   showing 20 byte(s)
-   highlighting PNG image magic at 0x00–0x07
+🔦 hex peek — mystery.blob   showing 29 byte(s)
+   highlighting PNG image magic at 0x00–0x07; 9 header field(s) decoded
 00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
-00000010  00 00 00 10                                       |....            |
+00000010  00 00 07 80 00 00 04 38  08 06 00 00 00           |.......8.....   |
           ^^^^^^^^^^^^^^^^^^^^^^^ PNG image magic
+   decoded header fields:
+       0x10–0x13  width       = 1920
+       0x14–0x17  height      = 1080
+            0x18  bit depth   = 8
+            0x19  colour type = truecolour+alpha (RGBA) (6)
 
 $ cat mystery.blob | bytebite -
 🔍 PNG image  (category: image)   confidence: 94%
@@ -49,7 +54,7 @@ $ bytebite mystery.blob --json
 [issues](../../issues). This repo is part of an automated tool-lab experiment
 (topic: `auto-tool-lab`).
 
-**Working now (M5):** `bytebite <file>` identifies a file by its magic bytes and
+**Working now (M6):** `bytebite <file>` identifies a file by its magic bytes and
 prints the format, category, confidence, and matched byte range. `bytebite peek
 <file>` renders an annotated hex view of the header with the recognised
 magic-byte range highlighted and labeled (colorized on a TTY, plain carets when
@@ -59,10 +64,17 @@ BZIP2, ZSTD, 7-Zip, TAR (via its `ustar` header at offset 257), WAV, MP3,
 SQLite, Parquet, ELF, PE, Java class and WebAssembly. Both commands also read
 from **stdin** with `-`, so bytebite composes in pipelines
 (`cat mystery.blob | bytebite -`). Tiny and empty inputs are handled without
-crashing. **New in M5:** `--json` gives a stable, versioned one-line JSON payload
-and `--quiet` prints just the format name, both with predictable exit codes
-(`0` identified, `1` unknown, `2` error) — see [Scripting](#scripting--json-output).
-Field-level header annotation (M6) is next.
+crashing. `--json` gives a stable, versioned one-line JSON payload and `--quiet`
+prints just the format name, both with predictable exit codes (`0` identified,
+`1` unknown, `2` error) — see [Scripting](#scripting--json-output). **New in M6:**
+`peek` now decodes and labels **individual header fields** — not just the magic
+range — for **PNG** (IHDR: width/height/bit depth/colour type…), **ELF** (class,
+endianness, OS ABI, type, machine — reading the right byte order per binary),
+**ZIP** local headers (compression method, CRC-32, sizes…), and **WAV** fmt
+chunks (audio format, channels, sample rate, bit depth…). The decoded values
+appear in a legend under the dump (and in `peek --json` as a typed `fields`
+list), and `bytebite --list-formats` lists every known format and marks which
+have field-level detail. See [Field-level header annotation](#field-level-header-annotation).
 
 ## Install
 
@@ -87,6 +99,7 @@ bytebite peek <file>     # annotated hex view of the header (working now)
 bytebite peek <file> -n 32  # show the first 32 bytes (default: 64)
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
+bytebite --list-formats  # list every known format + which have field detail
 cat blob | bytebite -    # read from stdin (working now)
 ```
 
@@ -106,6 +119,64 @@ $ bytebite peek mystery.blob --bytes 16
 ```
 
 Exit codes: `0` identified, `1` unidentified, `2` usage/I-O error.
+
+## Field-level header annotation
+
+For a handful of well-known formats, `bytebite peek` goes a step past the magic
+range and decodes the **individual header fields**, so you can read a file's
+actual dimensions, codec, or layout straight from the dump:
+
+```
+$ bytebite peek photo.png
+🔦 hex peek — photo.png   showing 29 byte(s)
+   highlighting PNG image magic at 0x00–0x07; 9 header field(s) decoded
+00000000  89 50 4e 47 0d 0a 1a 0a  00 00 00 0d 49 48 44 52  |.PNG........IHDR|
+00000010  00 00 07 80 00 00 04 38  08 06 00 00 00           |.......8.....   |
+          ^^^^^^^^^^^^^^^^^^^^^^^ PNG image magic
+   decoded header fields:
+       0x08–0x0b  IHDR length = 13
+       0x0c–0x0f  chunk type  = IHDR
+       0x10–0x13  width       = 1920
+       0x14–0x17  height      = 1080
+            0x18  bit depth   = 8
+            0x19  colour type = truecolour+alpha (RGBA) (6)
+            0x1a  compression = deflate (0)
+            0x1b  filter      = adaptive (0)
+            0x1c  interlace   = none (0)
+```
+
+On a colour terminal the field spans light up inline in the dump; when piped or
+under `NO_COLOR` the magic range is underlined with carets and every decoded
+field is listed in the legend (so the output stays readable no matter how many
+fields a format has).
+
+Formats with field-level detail today:
+
+- **PNG** — IHDR: width, height, bit depth, colour type, compression, filter,
+  interlace.
+- **ELF** — class (32/64-bit), data (endianness), version, OS ABI, type,
+  machine. Byte order for `type`/`machine` is read per-binary from `EI_DATA`, so
+  big- and little-endian binaries both decode correctly.
+- **ZIP** local file header — version needed, flags, compression method, mod
+  time/date, CRC-32, compressed/uncompressed sizes, name/extra lengths.
+- **WAV** fmt chunk — audio format, channels, sample rate, byte rate, block
+  align, bits per sample.
+
+See everything the registry knows (and which formats carry field detail) with:
+
+```
+$ bytebite --list-formats
+bytebite knows 22 formats (4 with field-level header detail):
+  ...
+  ELF executable       executable • fields
+  ...
+  PNG image            image      • fields
+
+'• fields' formats decode individual header fields in `bytebite peek`.
+```
+
+`--list-formats --json` emits the same information as one machine-readable line
+(`{"schema_version":1,"tool":"bytebite","formats":[{"name":...,"category":...,"fields":true},...]}`).
 
 ## Scripting / JSON output
 
@@ -167,17 +238,30 @@ a known shape. `identify --json`:
 ```
 
 `peek --json` is a superset — the same identification keys plus a `peek` object
-with the dump metadata and labelled highlight spans:
+with the dump metadata, labelled highlight spans, and (M6) a typed `fields` list
+of the decoded header fields:
 
 ```jsonc
 {
   ...identify keys...,
   "peek": {
-    "bytes_shown": 12,         // bytes actually rendered (honours --bytes)
-    "total_read": 12,          // bytes read from the source head
-    "hex": "89504e470d0a1a0a0000000d",  // lowercase hex of the shown bytes
-    "spans": [                 // labelled ranges (empty when unidentified)
-      {"start": 0, "end": 8, "label": "PNG image magic", "hex": "89504e470d0a1a0a"}
+    "bytes_shown": 29,         // bytes actually rendered (honours --bytes)
+    "total_read": 29,          // bytes read from the source head
+    "hex": "89504e47...",      // lowercase hex of the shown bytes
+    "spans": [                 // labelled ranges (magic + fields; empty when unidentified)
+      {"start": 0, "end": 8, "label": "PNG image magic", "hex": "89504e470d0a1a0a"},
+      {"start": 16, "end": 20, "label": "width", "hex": "00000780"}
+    ],
+    "fields": [                // decoded header fields (empty if the format has no layout)
+      {
+        "name": "width",       // field label / JSON-friendly key
+        "offset": 16, "end": 20, "size": 4,
+        "type": "u32be",       // decoder: u8|u16be|u16le|u32be|u32le|ascii|hex|magic
+        "value": 1920,         // decoded value
+        "label": null,         // human label for enum fields (e.g. "deflate"), else null
+        "hex": "00000780",
+        "note": "pixels"       // optional short human note
+      }
     ]
   }
 }

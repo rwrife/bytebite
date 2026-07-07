@@ -119,3 +119,25 @@ def test_all_signatures_returns_readonly_tuple() -> None:
     sigs = all_signatures()
     assert isinstance(sigs, tuple)
     assert len(sigs) == len(SIGNATURES)
+
+
+def test_signature_field_layout_defaults_to_none() -> None:
+    sig = Signature(name="X", category="test", magic=b"AB")
+    assert sig.field_layout is None
+    assert sig.has_fields is False
+
+
+def test_target_formats_declare_a_field_layout() -> None:
+    # M6: PNG, ELF, the ZIP local header, and WAV carry a field layout name.
+    by_name = {}
+    for s in SIGNATURES:
+        by_name.setdefault(s.name, s)
+    for name in ["PNG image", "ELF executable", "ZIP archive", "WAV audio"]:
+        assert by_name[name].has_fields, f"{name} should declare a field layout"
+        assert by_name[name].field_layout == name
+
+
+def test_empty_zip_signature_has_no_field_layout() -> None:
+    # Only the local-file-header ZIP gets field detail, not the empty-EOCD one.
+    empty = next(s for s in SIGNATURES if s.name == "ZIP archive (empty)")
+    assert empty.has_fields is False

@@ -127,9 +127,25 @@ def test_peek_json_shape_and_spans(tmp_path, capsys) -> None:
     assert peek["bytes_shown"] == len(PNG)  # PNG head is < 16 bytes
     assert peek["total_read"] == len(PNG)
     assert peek["hex"].startswith("89504e47")
-    assert peek["spans"] == [
-        {"start": 0, "end": 8, "label": "PNG image magic", "hex": "89504e470d0a1a0a"}
-    ]
+    # First span is always the magic (identification proof). With M6 the short
+    # PNG head here also reaches the IHDR length field (offset 8–12), so a
+    # decoded-field span follows the magic span.
+    assert peek["spans"][0] == {
+        "start": 0,
+        "end": 8,
+        "label": "PNG image magic",
+        "hex": "89504e470d0a1a0a",
+    }
+    assert {
+        "start": 8,
+        "end": 12,
+        "label": "IHDR length",
+        "hex": "0000000d",
+    } in peek["spans"]
+    # The richer typed field view carries the decoded value + note.
+    ihdr_len = next(f for f in peek["fields"] if f["name"] == "IHDR length")
+    assert ihdr_len["value"] == 13
+    assert ihdr_len["type"] == "u32be"
 
 
 def test_peek_json_unknown_has_empty_spans_exit_zero(tmp_path, capsys) -> None:
