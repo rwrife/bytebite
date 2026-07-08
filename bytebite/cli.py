@@ -38,7 +38,14 @@ from typing import Optional, Sequence, Tuple
 from . import __version__
 from .identify import HEAD_SIZE, identify
 from .peek import DEFAULT_BYTES, peek_result_dict, render_peek
-from .render import quiet_line, render_identification, result_dict, to_json
+from .render import (
+    SCHEMA_VERSION,
+    quiet_line,
+    render_identification,
+    result_dict,
+    to_json,
+)
+from .signatures import all_signatures
 
 PROG = "bytebite"
 DESCRIPTION = "A pocket detective for mystery files: identify a binary and peek at its header."
@@ -103,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--version",
         action="version",
         version=f"%(prog)s {__version__}",
+    )
+    parser.add_argument(
+        "--list-formats",
+        action="store_true",
+        help="list every known format (and which have field-level header detail) and exit",
     )
     parser.add_argument(
         "file",
@@ -236,6 +248,48 @@ def _peek_file(argv: Sequence[str]) -> int:
     return EXIT_OK
 
 
+def _list_formats(*, json_out: bool = False) -> int:
+    """Print every known format and whether it has field-level detail (M6).
+
+    Deduplicates by format name (several signatures can share a name, e.g. the
+    two GIF versions), sorts by category then name for a stable, skimmable list,
+    and marks the formats that decode individual header fields. ``--json`` emits
+    one machine-readable line for tooling/completions. Always exits 0.
+    """
+    # Collapse duplicate names; a name has field detail if any of its signatures
+    # declares a field layout.
+    by_name: dict = {}
+    for sig in all_signatures():
+        entry = by_name.setdefault(
+            sig.name,
+            {"name": sig.name, "category": sig.category, "fields": False},
+        )
+        if sig.has_fields:
+            entry["fields"] = True
+    formats = sorted(by_name.values(), key=lambda e: (e["category"], e["name"]))
+
+    if json_out:
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "tool": PROG,
+            "formats": formats,
+        }
+        print(to_json(payload))
+        return EXIT_OK
+
+    with_detail = sum(1 for e in formats if e["fields"])
+    print(
+        f"{PROG} knows {len(formats)} formats "
+        f"({with_detail} with field-level header detail):"
+    )
+    name_w = max(len(e["name"]) for e in formats)
+    for e in formats:
+        mark = "• fields" if e["fields"] else ""
+        print(f"  {e['name']:<{name_w}}  {e['category']:<10} {mark}".rstrip())
+    print("\n'• fields' formats decode individual header fields in `bytebite peek`.")
+    return EXIT_OK
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Run the CLI. Returns a process exit code."""
     if argv is None:
@@ -252,6 +306,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     normalized = [_STDIN_TOKEN if a == STDIN_ARG else a for a in argv]
     parser = build_parser()
     args = parser.parse_args(normalized)
+
+    if args.list_formats:
+        # A registry listing, independent of any input file.
+        return _list_formats(json_out=args.json)
 
     if args.file is None:
         # A bare invocation stays friendly: print help, exit 0.

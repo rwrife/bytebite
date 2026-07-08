@@ -40,6 +40,13 @@ class Signature:
         with "wildcard" nibbles (e.g. a version byte that may vary).
     description:
         One-line human description of the format.
+    field_layout:
+        Optional name of a field-level header layout (M6). When set, the format
+        has per-field decoding available via :mod:`bytebite.fields`
+        (``bytebite.fields.fields_for(field_layout)``) so ``peek`` can label
+        individual header fields, not just the magic range. Kept as a plain
+        name (not the field objects) so this module stays a pure, dependency-
+        free data registry; the layouts themselves live in :mod:`bytebite.fields`.
     """
 
     name: str
@@ -48,6 +55,12 @@ class Signature:
     offset: int = 0
     mask: Optional[bytes] = None
     description: str = ""
+    field_layout: Optional[str] = None
+
+    @property
+    def has_fields(self) -> bool:
+        """True when this signature declares a field-level header layout."""
+        return self.field_layout is not None
 
     def __post_init__(self) -> None:
         if not self.magic:
@@ -96,6 +109,7 @@ SIGNATURES: List[Signature] = [
         category="image",
         magic=b"\x89PNG\r\n\x1a\n",
         description="Portable Network Graphics — lossless raster image.",
+        field_layout="PNG image",
     ),
     Signature(
         name="GIF image",
@@ -129,6 +143,7 @@ SIGNATURES: List[Signature] = [
         category="archive",
         magic=b"PK\x03\x04",
         description="ZIP archive (local file header) — also the basis of jar/docx/apk.",
+        field_layout="ZIP archive",
     ),
     Signature(
         name="ZIP archive (empty)",
@@ -147,6 +162,7 @@ SIGNATURES: List[Signature] = [
         category="executable",
         magic=b"\x7fELF",
         description="Executable and Linkable Format — Unix/Linux binary.",
+        field_layout="ELF executable",
     ),
     Signature(
         name="PE executable",
@@ -179,6 +195,7 @@ SIGNATURES: List[Signature] = [
         magic=b"RIFF\x00\x00\x00\x00WAVE",
         mask=b"\xff\xff\xff\xff\x00\x00\x00\x00\xff\xff\xff\xff",
         description="WAVE audio (RIFF/PCM container).",
+        field_layout="WAV audio",
     ),
     Signature(
         name="MP3 audio",

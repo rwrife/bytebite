@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from .identify import Match
+from .fields import DecodedField, decoded_fields_for
 from .render import SCHEMA_VERSION, color_enabled, format_hex, result_dict
 
 # Layout constants. Kept module-level so tests can reason about them and a
@@ -52,17 +53,26 @@ _CARET = "^"
 class Span:
     """A labelled, optionally-coloured byte range ``[start, end)``.
 
-    ``label`` is shown in the caption beneath the dump. Only the magic span is
-    produced today; the dataclass exists so M6's field-level annotation can hand
-    :func:`render_peek` a list of these without changing its signature.
+    ``label`` is shown in the caption beneath the dump. As of M6 a span may also
+    carry a decoded ``value`` (the human rendering of the field's contents) so
+    the caption can read ``width = 16`` rather than just naming the range. The
+    magic-range span leaves ``value`` as ``None``; field spans fill it in.
     """
 
     start: int
     end: int
     label: str
+    value: Optional[str] = None
+    kind: str = "magic"  # "magic" | "field"
 
     def contains(self, index: int) -> bool:
         return self.start <= index < self.end
+
+    def caption(self) -> str:
+        """Caption text for this span: ``label`` or ``label = value``."""
+        if self.value is None:
+            return self.label
+        return f"{self.label} = {self.value}"
 
 
 def _is_printable(byte: int) -> bool:
@@ -74,12 +84,35 @@ def _hex_pair(byte: int) -> str:
     return f"{byte:02x}"
 
 
-def _spans_for_match(match: Optional[Match]) -> List[Span]:
-    """Build the highlight span(s) for ``match`` (just the magic range today)."""
+def _spans_for_match(match: Optional[Match], data: bytes = b"") -> List[Span]:
+    """Build the highlight span(s) for ``match``.
+
+    Always includes the magic range. When the matched format has a field-level
+    layout (M6) *and* ``data`` is long enough to decode fields, one labelled
+    span per decoded field is appended too, so ``peek`` shows the individual
+    header fields (PNG width/height, ELF class/machine, ZIP method, WAV sample
+    rate, …) and not just the magic bytes.
+
+    The magic span is listed first (it is the identification proof); field spans
+    follow in header order. Rendering treats them uniformly, so a byte covered
+    by both a field and the magic range still highlights correctly.
+    """
     if match is None:
         return []
-    # Clamp defensively: a signature could, in principle, sit past what we show.
-    return [Span(match.offset, match.end, f"{match.name} magic")]
+    spans: List[Span] = [
+        Span(match.offset, match.end, f"{match.name} magic", kind="magic")
+    ]
+    for decoded in decoded_fields_for(match.name, data):
+        spans.append(
+            Span(
+                decoded.offset,
+                decoded.end,
+                decoded.name,
+                value=decoded.display(),
+                kind="field",
+            )
+        )
+    return spans
 
 
 def peek_result_dict(
@@ -106,12 +139,24 @@ def peek_result_dict(
             "bytes_shown": int,
             "total_read": int,
             "hex": "<lowercase hex of the shown bytes>",
-            "spans": [ {"start": int, "end": int, "label": str, "hex": str} ]
+            "spans": [ {"start": int, "end": int, "label": str, "hex": str} ],
+            "fields": [
+              {"name": str, "offset": int, "end": int, "size": int,
+               "type": str, "value": <decoded>, "label": str|null,
+               "hex": str, "note": str}
+            ]
           }
         }
+
+    The ``spans`` list mirrors what is highlighted in the dump (magic + any
+    decoded fields). The ``fields`` list is the richer, typed view of the
+    decoded header fields (M6) and is present (possibly empty) whenever a match
+    was made; it is empty for formats without a field layout or when the header
+    was too short to decode.
     """
     view = data[: max(bytes_shown, 0)]
-    spans = _spans_for_match(match)
+    spans = _spans_for_match(match, data)
+    decoded = decoded_fields_for(match.name, data) if match is not None else []
     payload = result_dict(match, source=source)
     payload["peek"] = {
         "bytes_shown": len(view),
@@ -125,6 +170,20 @@ def peek_result_dict(
                 "hex": data[s.start : s.end].hex(),
             }
             for s in spans
+        ],
+        "fields": [
+            {
+                "name": d.name,
+                "offset": d.offset,
+                "end": d.end,
+                "size": d.field.size,
+                "type": d.field.type,
+                "value": d.value,
+                "label": d.label,
+                "hex": d.raw.hex(),
+                "note": d.note,
+            }
+            for d in decoded
         ],
     }
     return payload
@@ -169,7 +228,7 @@ def render_peek(
     """
     enabled = color_enabled() if use_color is None else use_color
     view = data[: max(bytes_shown, 0)]
-    spans = _spans_for_match(match)
+    spans = _spans_for_match(match, data)
 
     lines: List[str] = []
 
@@ -181,9 +240,13 @@ def render_peek(
 
     if match is not None and shown > match.offset:
         rng = _fmt_range(match.offset, match.end)
+        field_note = ""
+        n_fields = sum(1 for s in spans if s.kind == "field")
+        if n_fields:
+            field_note = f"; {n_fields} header field(s) decoded"
         lines.append(
             _paint(
-                f"   highlighting {match.name} magic at {rng}",
+                f"   highlighting {match.name} magic at {rng}{field_note}",
                 _DIM,
                 enabled=enabled,
             )
@@ -202,7 +265,38 @@ def render_peek(
         caret_lines = _caret_captions(view, spans)
         lines.extend(caret_lines)
 
+    # --- Decoded field legend (both modes) ----------------------------------
+    # Carets are dropped in colour mode, and even in plain mode a compact,
+    # aligned ``label = value`` legend is far more readable than reading values
+    # off the caret rows. Emitted whenever we decoded fields that are visible.
+    field_legend = _field_legend(spans, shown, enabled=enabled)
+    if field_legend:
+        lines.extend(field_legend)
+
     return "\n".join(lines)
+
+
+def _field_legend(spans: List[Span], shown: int, *, enabled: bool) -> List[str]:
+    """Render a compact ``offset  label = value`` legend for decoded fields.
+
+    Only fields whose start is within the shown window are listed. Returns an
+    empty list when there are no field spans to describe, so magic-only formats
+    (and unknown blobs) render exactly as before.
+    """
+    field_spans = [
+        s for s in spans if s.kind == "field" and s.start < shown
+    ]
+    if not field_spans:
+        return []
+    label_w = max(len(s.label) for s in field_spans)
+    header = _paint("   decoded header fields:", _BOLD, enabled=enabled)
+    out: List[str] = [header]
+    for s in field_spans:
+        rng = _fmt_range(s.start, s.end)
+        name = _paint(f"{s.label:<{label_w}}", _CYAN, enabled=enabled)
+        value = "" if s.value is None else f" = {_paint(s.value, _BOLD, enabled=enabled)}"
+        out.append(f"     {rng:>11}  {name}{value}")
+    return out
 
 
 def _fmt_range(start: int, end: int) -> str:
@@ -269,17 +363,22 @@ def _join_hex(cells: List[str]) -> str:
 
 
 def _caret_captions(view: bytes, spans: List[Span]) -> List[str]:
-    """Plain-mode captions: underline each span with carets + its label.
+    """Plain-mode captions: underline the magic span with carets + its label.
 
-    Only emitted when colour is off (piped/`NO_COLOR`), so the highlight is still
-    visible in plain text and the golden tests have a stable, greppable marker.
-    Each caption is anchored to the row where the span begins.
+    Only emitted when colour is off (piped/`NO_COLOR`), so the identification
+    proof is still visible in plain text and the golden tests have a stable,
+    greppable marker. Only the *magic* span is underlined with carets — decoded
+    field values are listed separately by :func:`_field_legend`, which stays
+    readable no matter how many fields a format has. The caption is anchored to
+    the row where the span begins.
     """
     lines: List[str] = []
     # Width of the offset column + the two spaces before the hex block.
     prefix_w = 8 + 2
 
     for span in spans:
+        if span.kind != "magic":
+            continue
         if span.start >= len(view):
             continue
         row_base = (span.start // BYTES_PER_ROW) * BYTES_PER_ROW
@@ -294,7 +393,7 @@ def _caret_captions(view: bytes, spans: List[Span]) -> List[str]:
         end_col = _hex_column_offset(last_in_row) + 2
         pad = " " * (prefix_w + start_col)
         carets = _CARET * max(end_col - start_col, 1)
-        lines.append(f"{pad}{carets} {span.label}")
+        lines.append(f"{pad}{carets} {span.caption()}")
     return lines
 
 
