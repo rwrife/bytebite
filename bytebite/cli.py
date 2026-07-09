@@ -18,6 +18,11 @@ newline-terminated JSON line (schema versioned, see README) for both ``identify`
 and ``peek``; ``--quiet`` prints just the format name (or nothing on an unknown)
 for ``name=$(bytebite f -q)`` style use. Colour is never emitted in either mode.
 
+The ``explain`` subcommand (issue #7) is the pocket-reference path: ``bytebite
+explain <format>`` prints a *known format's* magic bytes and documented header
+layout without needing a file. It reuses the signature registry and the M6
+field layouts; ``--json`` emits the same reference as one stable line.
+
 Exit codes (stabilised in M5):
     0  file identified
     1  file read but not identified
@@ -36,6 +41,8 @@ import sys
 from typing import Optional, Sequence, Tuple
 
 from . import __version__
+from .explain import explain as explain_format
+from .explain import explain_dict, render_explain
 from .identify import HEAD_SIZE, identify
 from .peek import DEFAULT_BYTES, peek_result_dict, render_peek
 from .render import (
@@ -122,6 +129,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="path to the file to identify, or '-' for stdin (omit to show help)",
     )
     _add_output_flags(parser)
+    return parser
+
+
+def build_explain_parser() -> argparse.ArgumentParser:
+    """Parser for the ``explain`` subcommand (the file-less reference)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} explain",
+        description="Print a known format's magic bytes and documented header layout (no file needed).",
+    )
+    parser.add_argument(
+        "format",
+        help="format to explain, e.g. 'png', 'elf', 'zip', 'wav' (also accepts '.png' or the full name)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the reference as one machine-readable JSON line (schema in README)",
+    )
     return parser
 
 
@@ -248,6 +273,49 @@ def _peek_file(argv: Sequence[str]) -> int:
     return EXIT_OK
 
 
+def _explain_format(argv: Sequence[str]) -> int:
+    """Handle ``bytebite explain <format> [--json]``. Returns an exit code.
+
+    Resolves the format token forgivingly (``png`` / ``.png`` / ``PNG image``)
+    and prints its magic bytes + documented header layout. An ambiguous or
+    unknown token exits :data:`EXIT_ERROR` with a helpful hint on stderr, so
+    ``explain`` fails loudly (unlike ``peek``, which is a viewer). ``--json``
+    emits the reference payload; there is no field data to hide, so no
+    ``--quiet`` here.
+    """
+    args = build_explain_parser().parse_args(argv)
+    info, candidates, status = explain_format(args.format)
+
+    if info is None:
+        if status == "ambiguous":
+            hint = ", ".join(candidates)
+            print(
+                f"{PROG}: explain: {args.format!r} is ambiguous. "
+                f"Did you mean: {hint}?",
+                file=sys.stderr,
+            )
+        elif candidates:
+            hint = ", ".join(candidates)
+            print(
+                f"{PROG}: explain: unknown format {args.format!r}. "
+                f"Did you mean: {hint}?",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"{PROG}: explain: unknown format {args.format!r}. "
+                f"Try `{PROG} --list-formats` to see what's known.",
+                file=sys.stderr,
+            )
+        return EXIT_ERROR
+
+    if args.json:
+        print(to_json(explain_dict(info)))
+    else:
+        print(render_explain(info))
+    return EXIT_OK
+
+
 def _list_formats(*, json_out: bool = False) -> int:
     """Print every known format and whether it has field-level detail (M6).
 
@@ -299,6 +367,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # bare ``bytebite <file>`` identify form stays the zero-ceremony default.
     if argv and argv[0] == "peek":
         return _peek_file(argv[1:])
+
+    # ``explain`` is the file-less reference path; route it the same way.
+    if argv and argv[0] == "explain":
+        return _explain_format(argv[1:])
 
     # ``bytebite -`` reads from stdin. A lone ``-`` would be misread by argparse
     # as an optional, so swap in the sentinel (as peek does) and let the parser

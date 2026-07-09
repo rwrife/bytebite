@@ -76,6 +76,11 @@ appear in a legend under the dump (and in `peek --json` as a typed `fields`
 list), and `bytebite --list-formats` lists every known format and marks which
 have field-level detail. See [Field-level header annotation](#field-level-header-annotation).
 
+**Also available:** `bytebite explain <format>` is a file-less pocket reference —
+it prints a known format's magic bytes and documented header layout without
+needing a sample file (e.g. `bytebite explain png`). See
+[Explain a format](#explain-a-format).
+
 ## Install
 
 ```
@@ -97,6 +102,7 @@ python -m bytebite --help
 bytebite <file>          # identify a file (working now)
 bytebite peek <file>     # annotated hex view of the header (working now)
 bytebite peek <file> -n 32  # show the first 32 bytes (default: 64)
+bytebite explain <format>   # print a format's magic + header layout (no file)
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
 bytebite --list-formats  # list every known format + which have field detail
@@ -177,6 +183,52 @@ bytebite knows 22 formats (4 with field-level header detail):
 
 `--list-formats --json` emits the same information as one machine-readable line
 (`{"schema_version":1,"tool":"bytebite","formats":[{"name":...,"category":...,"fields":true},...]}`).
+
+## Explain a format
+
+Don't have a sample file but want to remember what a header looks like?
+`bytebite explain <format>` prints the format's magic bytes and its documented
+header layout straight from the registry — a pocket reference, no file required:
+
+```
+$ bytebite explain png
+📖 PNG image  (category: image)
+   Portable Network Graphics — lossless raster image.
+
+Magic:
+   \x89PNG\x0d\x0a\x1a\x0a   @ offset 0x00
+
+Header fields:
+   0x08–0x0b  4B  u32be  IHDR length  — chunk length (13)
+   0x0c–0x0f  4B  ascii  chunk type   — always 'IHDR'
+   0x10–0x13  4B  u32be  width        — pixels
+   0x14–0x17  4B  u32be  height       — pixels
+   0x18       1B  u8     bit depth
+   0x19       1B  u8     colour type
+   0x1a       1B  u8     compression
+   0x1b       1B  u8     filter
+   0x1c       1B  u8     interlace
+
+Known values:
+   colour type: 0=grayscale, 2=truecolour (RGB), 3=indexed, ...
+   compression: 0=deflate
+   ...
+```
+
+The format token is forgiving: `png`, `PNG`, `.png` and the full `PNG image`
+all resolve, as do leading mnemonics for the rest (`elf`, `zip`, `wav`, `sqlite`
+…). Formats that only have magic-byte identification (no decoded header) say so
+instead of a field table. An ambiguous or unknown token exits `2` with a
+"did you mean …?" hint. `--json` emits the same reference as one stable line for
+tooling (building docs, shell completions, etc.):
+
+```
+$ bytebite explain wav --json
+{"schema_version":1,"tool":"bytebite","format":{"name":"WAV audio","category":"audio","description":"...","signatures":[{"magic":"RIFF????????WAVE","offset":0,"masked":true}],"fields":[{"name":"RIFF","offset":0,"size":4,"type":"ascii","note":"container tag"}, ...]}}
+```
+
+> Unlike `peek` (a viewer that exits `0` even on unknown input), `explain`
+> requires a *known* format name, so a bad name is a `2` (usage error).
 
 ## Scripting / JSON output
 
