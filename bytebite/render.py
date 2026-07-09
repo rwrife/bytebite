@@ -19,12 +19,18 @@ import os
 import sys
 from typing import Any, Dict, List, Optional
 
+from .container import ContainerKind
 from .identify import Match
 
 # Bumped whenever the JSON shape changes in a way scripts would notice. The
 # value is surfaced in every ``--json`` payload as ``schema_version`` so
 # consumers can pin to (or branch on) a known contract. Documented in README.
-SCHEMA_VERSION = 1
+#
+# v2 adds the optional ``container`` object to a match payload: when a ZIP-based
+# file is recognised as a specific format (docx/jar/apk/epub…), the real type is
+# reported alongside the plain ZIP identification. The field is ``null`` for
+# non-container matches, so v1 consumers that ignore unknown keys keep working.
+SCHEMA_VERSION = 2
 
 # A tiny, dependency-free ANSI palette. Only what we need.
 _RESET = "\x1b[0m"
@@ -69,7 +75,12 @@ def format_hex(data: bytes) -> str:
     return "".join(out)
 
 
-def result_dict(match: Optional[Match], *, source: Optional[str] = None) -> Dict[str, Any]:
+def result_dict(
+    match: Optional[Match],
+    *,
+    source: Optional[str] = None,
+    container: Optional[ContainerKind] = None,
+) -> Dict[str, Any]:
     """Build the canonical identification mapping (the ``--json`` payload).
 
     This is the single source of truth for machine-readable output. ``source``
@@ -85,7 +96,10 @@ def result_dict(match: Optional[Match], *, source: Optional[str] = None) -> Dict
           "identified": true | false,
           "match": null | {
             "name": str, "category": str, "confidence": float (0..1),
-            "description": str, "offset": int, "end": int, "magic": str
+            "description": str, "offset": int, "end": int, "magic": str,
+            "container": null | {
+              "name": str, "extension": str, "description": str
+            }
           }
         }
     """
@@ -105,6 +119,15 @@ def result_dict(match: Optional[Match], *, source: Optional[str] = None) -> Dict
             "offset": match.offset,
             "end": match.end,
             "magic": format_hex(match.matched_bytes),
+            "container": (
+                {
+                    "name": container.name,
+                    "extension": container.extension,
+                    "description": container.description,
+                }
+                if container is not None
+                else None
+            ),
         }
     return payload
 
@@ -137,6 +160,7 @@ def render_identification(
     *,
     source: str,
     alternatives: Optional[List[Match]] = None,
+    container: Optional[ContainerKind] = None,
     use_color: Optional[bool] = None,
 ) -> str:
     """Return the human-readable identification block for ``match``.
@@ -168,6 +192,14 @@ def render_identification(
     ]
     if match.description:
         lines.append(f"   → {match.description}")
+
+    if container is not None:
+        looks = _paint(
+            f".{container.extension}", _BOLD, _CYAN, enabled=enabled
+        )
+        lines.append(f"   📦 ZIP container → looks like a {looks} ({container.name})")
+        if container.description:
+            lines.append(f"      {container.description}")
 
     if alternatives:
         alt_names = ", ".join(

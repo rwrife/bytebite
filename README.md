@@ -184,6 +184,41 @@ bytebite knows 22 formats (4 with field-level header detail):
 `--list-formats --json` emits the same information as one machine-readable line
 (`{"schema_version":1,"tool":"bytebite","formats":[{"name":...,"category":...,"fields":true},...]}`).
 
+## Container awareness (ZIP → docx/jar/apk…)
+
+Half the "why does it say ZIP?" confusion in the world comes from formats that
+are *secretly just ZIP archives*: a `.docx` is a ZIP full of `word/*.xml`, a
+`.jar` is a ZIP with `META-INF/MANIFEST.MF`, an `.apk` adds
+`AndroidManifest.xml`, and an `.epub` leads with a `mimetype` member. When
+bytebite identifies a real file as a ZIP, it peeks one level deeper at the
+archive's member names and reports the *real* type:
+
+```
+$ bytebite report.docx
+🔍 ZIP archive  (category: archive)   confidence: 75%
+   matched magic PK\x03\x04 at offset 0x00–0x03
+   → ZIP archive (local file header) — also the basis of jar/docx/apk.
+   📦 ZIP container → looks like a .docx (Word document (OOXML))
+      Office Open XML word processing document (ZIP of word/*.xml).
+```
+
+Recognised containers: **docx / xlsx / pptx** (OOXML), **jar**, **apk**,
+**epub**, and **odt**. A plain ZIP with no tell-tale layout is reported as an
+ordinary ZIP archive, unchanged.
+
+Detection reads only the archive's central-directory listing (never the member
+data), so it stays cheap and safe on hostile input. It needs a seekable file, so
+piped/`stdin` sources are reported as a plain ZIP. In `--json` (and `peek
+--json`) the real type rides along under `match.container`:
+
+```json
+"container": {"name": "Word document (OOXML)", "extension": "docx", "description": "..."}
+```
+
+for recognised containers, or `null` otherwise. (This bumped the JSON
+`schema_version` to **`2`**; the field is additive, so v1 consumers that ignore
+unknown keys keep working.)
+
 ## Explain a format
 
 Don't have a sample file but want to remember what a header looks like?
@@ -268,12 +303,12 @@ $ bytebite mystery.blob --json
 
 ### JSON schema
 
-Every payload carries `schema_version` (currently **`1`**) so scripts can pin to
+Every payload carries `schema_version` (currently **`2`**) so scripts can pin to
 a known shape. `identify --json`:
 
 ```jsonc
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tool": "bytebite",
   "source": "mystery.blob",   // path, "<stdin>", or null
   "identified": true,
@@ -284,7 +319,8 @@ a known shape. `identify --json`:
     "description": "Portable Network Graphics — lossless raster image.",
     "offset": 0,               // start of the matched magic range
     "end": 8,                  // exclusive end of the range
-    "magic": "\\x89PNG\\x0d\\x0a\\x1a\\x0a"
+    "magic": "\\x89PNG\\x0d\\x0a\\x1a\\x0a",
+    "container": null          // ZIP-based real type (docx/jar/apk…) or null
   }
 }
 ```

@@ -121,6 +121,7 @@ def peek_result_dict(
     *,
     bytes_shown: int = DEFAULT_BYTES,
     source: Optional[str] = None,
+    container=None,
 ) -> Dict[str, Any]:
     """Build the machine-readable ``peek --json`` payload.
 
@@ -157,7 +158,7 @@ def peek_result_dict(
     view = data[: max(bytes_shown, 0)]
     spans = _spans_for_match(match, data)
     decoded = decoded_fields_for(match.name, data) if match is not None else []
-    payload = result_dict(match, source=source)
+    payload = result_dict(match, source=source, container=container)
     payload["peek"] = {
         "bytes_shown": len(view),
         "total_read": len(data),
