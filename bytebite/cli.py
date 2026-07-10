@@ -41,6 +41,7 @@ import sys
 from typing import Optional, Sequence, Tuple
 
 from . import __version__
+from .container import ContainerKind, detect_container
 from .explain import explain as explain_format
 from .explain import explain_dict, render_explain
 from .identify import HEAD_SIZE, identify
@@ -198,6 +199,21 @@ def _read_head(path: str) -> Tuple[Optional[bytes], int]:
     return None, EXIT_ERROR
 
 
+def _container_for(match, source: str):
+    """Return a :class:`ContainerKind` when ``match`` is a ZIP worth peeking into.
+
+    Container detection needs random access to the archive's central directory,
+    so it only runs for real files (not stdin) whose best match is the ZIP local
+    file header. Any other match — or an unreadable/plain archive — yields
+    ``None`` and the identification is reported unchanged.
+    """
+    if match is None or _is_stdin(source):
+        return None
+    if match.name != "ZIP archive":
+        return None
+    return detect_container(source)
+
+
 def _identify_file(path: str, *, json_out: bool = False, quiet: bool = False) -> int:
     """Identify ``path`` (or stdin when ``-``) and print. Returns exit code.
 
@@ -213,16 +229,21 @@ def _identify_file(path: str, *, json_out: bool = False, quiet: bool = False) ->
     matches = identify(head)
     best = matches[0] if matches else None
     source = _display_name(path)
+    container = _container_for(best, path)
 
     if json_out:
-        print(to_json(result_dict(best, source=source)))
+        print(to_json(result_dict(best, source=source, container=container)))
     elif quiet:
         line = quiet_line(best)
         if line:
             print(line)
     else:
         alternatives = matches[1:3] if len(matches) > 1 else None
-        print(render_identification(best, source=source, alternatives=alternatives))
+        print(
+            render_identification(
+                best, source=source, alternatives=alternatives, container=container
+            )
+        )
     return EXIT_OK if best is not None else EXIT_UNIDENTIFIED
 
 
@@ -247,12 +268,14 @@ def _peek_file(argv: Sequence[str]) -> int:
     matches = identify(head)
     best = matches[0] if matches else None
     display = _display_name(source)
+    container = _container_for(best, source)
 
     if args.json:
         print(
             to_json(
                 peek_result_dict(
-                    head, best, bytes_shown=args.bytes, source=display
+                    head, best, bytes_shown=args.bytes, source=display,
+                    container=container,
                 )
             )
         )
