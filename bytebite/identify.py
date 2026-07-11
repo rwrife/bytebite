@@ -15,7 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .signatures import SIGNATURES, Signature
+from .registry import effective_signatures
+from .signatures import Signature
 
 # How many bytes of the file we sniff. The longest seed magic is 8 bytes; we
 # read generously so later milestones (offsets deeper into the header, field
@@ -92,7 +93,7 @@ def identify(head: bytes) -> List[Match]:
     are stable.
     """
     matches: List[Match] = []
-    for sig in SIGNATURES:
+    for sig in effective_signatures():
         if sig.matches(head):
             actual = head[sig.offset : sig.end]
             matches.append(

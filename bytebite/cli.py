@@ -59,7 +59,7 @@ from .render import (
     result_dict,
     to_json,
 )
-from .signatures import all_signatures
+from .registry import custom_report, effective_signatures as all_signatures
 
 PROG = "bytebite"
 DESCRIPTION = "A pocket detective for mystery files: identify a binary and peek at its header."
@@ -187,6 +187,24 @@ def build_find_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="emit matches as one machine-readable JSON line (schema in README)",
+    )
+    return parser
+
+
+def build_doctor_parser() -> argparse.ArgumentParser:
+    """Parser for the ``doctor`` subcommand (environment/registry self-check)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} doctor",
+        description=(
+            "Report the signature registry and custom-signature loading: "
+            "how many built-in vs custom signatures, the config dir, and any "
+            "drop-in files that failed to load."
+        ),
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the report as one machine-readable JSON line (schema in README)",
     )
     return parser
 
@@ -418,6 +436,66 @@ def _find_files(argv: Sequence[str]) -> int:
     return EXIT_OK if matches else EXIT_UNIDENTIFIED
 
 
+def _doctor(argv: Sequence[str]) -> int:
+    """Handle ``bytebite doctor [--json]``. Returns an exit code.
+
+    Reports the effective registry: how many built-in vs custom signatures are
+    loaded, where custom signatures are read from, and any drop-in files that
+    failed to parse (issue #10). Exit is :data:`EXIT_OK` when everything loaded
+    cleanly, else :data:`EXIT_UNIDENTIFIED` (1) to flag a problem to scripts
+    without being a hard usage error.
+    """
+    args = build_doctor_parser().parse_args(argv)
+    report = custom_report()
+    total = len(all_signatures())
+    custom_count = report.count
+    builtin_count = total - custom_count
+
+    if args.json:
+        payload = {
+            "schema_version": SCHEMA_VERSION,
+            "tool": PROG,
+            "version": __version__,
+            "signatures": {
+                "total": total,
+                "builtin": builtin_count,
+                "custom": custom_count,
+            },
+            "custom": {
+                "directory": str(report.directory),
+                "exists": report.directory.is_dir(),
+                "files_scanned": report.files_scanned,
+                "loaded": [s.name for s in report.signatures],
+                "errors": [
+                    {"source": src, "message": msg} for src, msg in report.errors
+                ],
+            },
+            "ok": report.ok,
+        }
+        print(to_json(payload))
+        return EXIT_OK if report.ok else EXIT_UNIDENTIFIED
+
+    print(f"{PROG} {__version__} — registry check")
+    print(
+        f"  signatures : {total} total "
+        f"({builtin_count} built-in, {custom_count} custom)"
+    )
+    print(f"  custom dir : {report.directory}")
+    if not report.directory.is_dir():
+        print("               (does not exist yet — drop *.json files here)")
+    else:
+        print(f"               ({report.files_scanned} *.json file(s) scanned)")
+    if report.signatures:
+        loaded = ", ".join(s.name for s in report.signatures)
+        print(f"  loaded     : {loaded}")
+    if report.errors:
+        print(f"  errors     : {len(report.errors)} drop-in(s) failed to load:")
+        for source, message in report.errors:
+            print(f"    - {source}: {message}")
+    print("\nOK" if report.ok else "\nCompleted with errors (see above).")
+    return EXIT_OK if report.ok else EXIT_UNIDENTIFIED
+
+
 def _list_formats(*, json_out: bool = False) -> int:
     """Print every known format and whether it has field-level detail (M6).
 
@@ -477,6 +555,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ``find`` is the fuzzy structured header search (issue #9).
     if argv and argv[0] == "find":
         return _find_files(argv[1:])
+
+    # ``doctor`` is the registry/custom-signature self-check (issue #10).
+    if argv and argv[0] == "doctor":
+        return _doctor(argv[1:])
 
     # ``bytebite -`` reads from stdin. A lone ``-`` would be misread by argparse
     # as an optional, so swap in the sentinel (as peek does) and let the parser

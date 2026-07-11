@@ -54,6 +54,10 @@ $ bytebite mystery.blob --json
 [issues](../../issues). This repo is part of an automated tool-lab experiment
 (topic: `auto-tool-lab`).
 
+**Also new:** custom signature files let you drop in private/proprietary formats
+as JSON with no code change, and `bytebite doctor` reports the registry and any
+custom signatures loaded — see [Custom signatures](#custom-signatures-bring-your-own-formats).
+
 **Working now (M6):** `bytebite <file>` identifies a file by its magic bytes and
 prints the format, category, confidence, and matched byte range. `bytebite peek
 <file>` renders an annotated hex view of the header with the recognised
@@ -107,6 +111,7 @@ bytebite find --field width=1920 *.png  # search files by header field value
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
 bytebite --list-formats  # list every known format + which have field detail
+bytebite doctor          # registry self-check + custom-signature report
 cat blob | bytebite -    # read from stdin (working now)
 ```
 
@@ -298,6 +303,75 @@ $ bytebite explain wav --json
 
 > Unlike `peek` (a viewer that exits `0` even on unknown input), `explain`
 > requires a *known* format name, so a bad name is a `2` (usage error).
+
+## Custom signatures (bring your own formats)
+
+Every shop has internal binary formats. Instead of forking bytebite to teach it
+a proprietary layout, drop a JSON file into the custom-signatures directory and
+bytebite picks it up at startup — no code change required.
+
+**Where they live** (first match wins):
+
+1. `$BYTEBITE_SIGNATURES_DIR` (explicit override)
+2. `$XDG_CONFIG_HOME/bytebite/signatures.d/`
+3. `~/.config/bytebite/signatures.d/`
+
+Any `*.json` file in that directory is loaded. Each file holds **either** a
+single signature object **or** a JSON array of them.
+
+**Schema:**
+
+```json
+{
+  "name": "ACME blob",
+  "category": "database",
+  "magic": "hex:41434d45",
+  "offset": 0,
+  "mask": "hex:ffffffff",
+  "description": "ACME internal record store."
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Human-friendly format name. Shadows a built-in of the same name. |
+| `category` | yes | One of: `image`, `archive`, `executable`, `document`, `audio`, `database`, `video`, `font`, `data`, `other`. |
+| `magic` | yes | Bytes to match. Encodings: `hex:...`, `base64:...`, or plain text (UTF-8), e.g. `"ACME"`. |
+| `offset` | no | Byte offset of `magic` (default `0`). |
+| `mask` | no | Per-byte mask, same length as `magic`. A byte matches when `(data & mask) == (magic & mask)` — use `00` bytes for wildcards. |
+| `description` | no | One-line human description. |
+
+> `field_layout` is intentionally **not** allowed in custom signatures —
+> field-level header decoding is built-in code, not user data. Custom
+> signatures contribute magic-byte identification only.
+
+**Merge & shadowing:** custom signatures are added to the built-ins but a custom
+`name` shadows any built-in with the same name (the built-in copies are dropped,
+so `--list-formats` shows one entry and your definition wins).
+
+**Errors are non-fatal:** a malformed drop-in is skipped, not fatal — one bad
+file never blocks the tool. Use `bytebite doctor` to see what loaded and what
+didn't.
+
+### `bytebite doctor`
+
+`doctor` is a self-check for the signature registry:
+
+```console
+$ bytebite doctor
+bytebite 0.1.0 — registry check
+  signatures : 25 total (24 built-in, 1 custom)
+  custom dir : /home/you/.config/bytebite/signatures.d
+               (2 *.json file(s) scanned)
+  loaded     : ACME blob
+  errors     : 1 drop-in(s) failed to load:
+    - .../bad.json: unknown category 'nope' (expected one of: ...)
+
+Completed with errors (see above).
+```
+
+Exit is `0` when everything loaded cleanly, `1` when any drop-in failed.
+`bytebite doctor --json` emits the same report as one machine-readable line.
 
 ## Scripting / JSON output
 
