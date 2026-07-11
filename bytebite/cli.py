@@ -44,6 +44,12 @@ from . import __version__
 from .container import ContainerKind, detect_container
 from .explain import explain as explain_format
 from .explain import explain_dict, render_explain
+from .find import (
+    PredicateError,
+    find_matches,
+    find_result_dict,
+    parse_predicate,
+)
 from .identify import HEAD_SIZE, identify
 from .peek import DEFAULT_BYTES, peek_result_dict, render_peek
 from .render import (
@@ -147,6 +153,40 @@ def build_explain_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="emit the reference as one machine-readable JSON line (schema in README)",
+    )
+    return parser
+
+
+def build_find_parser() -> argparse.ArgumentParser:
+    """Parser for the ``find`` subcommand (fuzzy structured header search)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} find",
+        description=(
+            "Search files for header fields matching a value, e.g. "
+            "`bytebite find --field width=1920 *.bin`."
+        ),
+    )
+    parser.add_argument(
+        "--field",
+        action="append",
+        dest="fields",
+        default=[],
+        metavar="NAME=VALUE",
+        help=(
+            "field predicate; repeatable (all must match). Operators: "
+            "= (exact, matches raw value or enum label), >=, <=, >, < (numeric)"
+        ),
+    )
+    parser.add_argument(
+        "files",
+        nargs="+",
+        metavar="FILE",
+        help="one or more files to search (shell globs expand to these)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit matches as one machine-readable JSON line (schema in README)",
     )
     return parser
 
@@ -339,6 +379,45 @@ def _explain_format(argv: Sequence[str]) -> int:
     return EXIT_OK
 
 
+def _find_files(argv: Sequence[str]) -> int:
+    """Handle ``bytebite find --field NAME=VALUE ... FILE ...``. Returns a code.
+
+    Identifies each file and keeps those whose decoded header fields satisfy
+    every ``--field`` predicate (see :mod:`bytebite.find`). A malformed
+    predicate is a usage error (exit 2); an empty result is exit 1 (nothing
+    matched, like an unidentified file); at least one match is exit 0. ``--json``
+    emits the matches as one stable line.
+    """
+    args = build_find_parser().parse_args(argv)
+
+    try:
+        predicates = [parse_predicate(clause) for clause in args.fields]
+    except PredicateError as exc:
+        print(f"{PROG}: find: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    if not predicates:
+        print(
+            f"{PROG}: find: need at least one --field NAME=VALUE predicate",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    matches = find_matches(args.files, predicates)
+
+    if args.json:
+        print(to_json(find_result_dict(matches, predicates)))
+    else:
+        for match in matches:
+            print(match.summary())
+        if not matches:
+            query = " ".join(p.describe() for p in predicates)
+            print(
+                f"{PROG}: find: no files matched {query!r}",
+                file=sys.stderr,
+            )
+    return EXIT_OK if matches else EXIT_UNIDENTIFIED
+
+
 def _list_formats(*, json_out: bool = False) -> int:
     """Print every known format and whether it has field-level detail (M6).
 
@@ -394,6 +473,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ``explain`` is the file-less reference path; route it the same way.
     if argv and argv[0] == "explain":
         return _explain_format(argv[1:])
+
+    # ``find`` is the fuzzy structured header search (issue #9).
+    if argv and argv[0] == "find":
+        return _find_files(argv[1:])
 
     # ``bytebite -`` reads from stdin. A lone ``-`` would be misread by argparse
     # as an optional, so swap in the sentinel (as peek does) and let the parser

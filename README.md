@@ -103,6 +103,7 @@ bytebite <file>          # identify a file (working now)
 bytebite peek <file>     # annotated hex view of the header (working now)
 bytebite peek <file> -n 32  # show the first 32 bytes (default: 64)
 bytebite explain <format>   # print a format's magic + header layout (no file)
+bytebite find --field width=1920 *.png  # search files by header field value
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
 bytebite --list-formats  # list every known format + which have field detail
@@ -218,6 +219,39 @@ piped/`stdin` sources are reported as a plain ZIP. In `--json` (and `peek
 for recognised containers, or `null` otherwise. (This bumped the JSON
 `schema_version` to **`2`**; the field is additive, so v1 consumers that ignore
 unknown keys keep working.)
+
+## Fuzzy structured search (`find`)
+
+The original Hacker News wish behind bytebite was *"an explorative hex editor
+with fuzzy field search"* — point it at a pile of mystery binaries and ask which
+ones match a header value. That's `bytebite find`:
+
+```
+$ bytebite find --field width=1920 *.png
+hero.png: PNG image (width=1920)
+banner.png: PNG image (width=1920)
+```
+
+It identifies each file, decodes its header fields with the same machinery as
+`peek`, and keeps the files whose fields satisfy **every** `--field` predicate.
+
+- **Match by value or label.** `--field method=deflate` and `--field method=8`
+  both work — enum fields match on their human label *or* raw value.
+- **Numeric comparisons.** `=` is exact; `>=`, `<=`, `>`, `<` compare numbers
+  (`--field 'width>=1920'`, `--field 'sample rate=48000'`). Quote clauses with
+  `>`/`<` so your shell doesn't redirect them.
+- **Repeatable (AND).** `--field width=1920 --field height=1080` keeps only
+  files that match both.
+- **Field names are case-insensitive** and may contain spaces (`'sample rate'`).
+
+Exit codes: `0` at least one match, `1` no files matched, `2` bad/empty query.
+`--json` emits one stable line: `{ "action": "find", "query": [...], "count": N,
+"matches": [ { "path", "format", "fields": [...] } ] }`.
+
+```
+$ bytebite find --field 'width>=1000' --field height=1080 --json photo.png
+{"schema_version":2,"tool":"bytebite","action":"find","query":["width>=1000","height=1080"],"count":1,"matches":[{"path":"photo.png","format":"PNG image","fields":[{"name":"width","value":1920,"label":null},{"name":"height","value":1080,"label":null}]}]}
+```
 
 ## Explain a format
 
