@@ -30,7 +30,8 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .fields import Field, fields_for, has_field_detail
 from .render import SCHEMA_VERSION, format_hex, to_json
-from .signatures import Signature, all_signatures
+from .registry import effective_signatures as all_signatures
+from .signatures import Signature
 
 # ``explain`` renders the ELF layout too, but the ELF field table is
 # endianness-dependent (see :func:`bytebite.fields._elf_fields`). With no file
