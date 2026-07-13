@@ -50,6 +50,7 @@ from .find import (
     find_result_dict,
     parse_predicate,
 )
+from .header import header_result_dict, render_header
 from .identify import HEAD_SIZE, identify
 from .peek import DEFAULT_BYTES, peek_result_dict, render_peek
 from .render import (
@@ -209,6 +210,34 @@ def build_doctor_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_header_parser() -> argparse.ArgumentParser:
+    """Parser for the ``header`` subcommand (parsed-header, no hex art)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} header",
+        description=(
+            "Print only the parsed header of a file as clean, machine-readable "
+            "output (no hex art, no prose). JSON is ideal for tooling."
+        ),
+    )
+    parser.add_argument(
+        "file",
+        help="path to the file to parse, or '-' for stdin",
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the parsed header as one machine-readable JSON line (schema in README)",
+    )
+    group.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="machine-only: print just the identified format name (nothing if unknown)",
+    )
+    return parser
+
+
 def build_peek_parser() -> argparse.ArgumentParser:
     """Parser for the ``peek`` subcommand."""
     parser = argparse.ArgumentParser(
@@ -352,6 +381,38 @@ def _peek_file(argv: Sequence[str]) -> int:
         )
     # peek is a viewer: rendering succeeded, so exit 0 even for unknown blobs.
     return EXIT_OK
+
+
+def _header_file(argv: Sequence[str]) -> int:
+    """Handle ``bytebite header <file> [--json|--quiet]``. Returns an exit code.
+
+    Prints only the parsed header (no hex art, no prose). ``<file>`` may be ``-``
+    (stdin). Unlike ``peek`` (a viewer), ``header`` gates its exit code on
+    identification so it composes in pipelines: 0 identified, 1 unknown, 2 error.
+    An identified format with no field layout still exits 0 with an empty
+    ``fields`` list. ``--quiet`` prints just the format name (nothing if unknown).
+    """
+    normalized = [_STDIN_TOKEN if a == STDIN_ARG else a for a in argv]
+    args = build_header_parser().parse_args(normalized)
+    source = STDIN_ARG if args.file == _STDIN_TOKEN else args.file
+
+    head, code = _read_head(source)
+    if head is None:
+        return code
+
+    matches = identify(head)
+    best = matches[0] if matches else None
+    display = _display_name(source)
+
+    if args.json:
+        print(to_json(header_result_dict(head, best, source=display)))
+    elif args.quiet:
+        line = quiet_line(best)
+        if line:
+            print(line)
+    else:
+        print(render_header(head, best, source=display))
+    return EXIT_OK if best is not None else EXIT_UNIDENTIFIED
 
 
 def _explain_format(argv: Sequence[str]) -> int:
@@ -547,6 +608,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # bare ``bytebite <file>`` identify form stays the zero-ceremony default.
     if argv and argv[0] == "peek":
         return _peek_file(argv[1:])
+
+    # ``header`` prints only the parsed header (no hex art) — the tooling seam.
+    if argv and argv[0] == "header":
+        return _header_file(argv[1:])
 
     # ``explain`` is the file-less reference path; route it the same way.
     if argv and argv[0] == "explain":
