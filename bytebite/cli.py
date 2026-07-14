@@ -42,6 +42,7 @@ from typing import Optional, Sequence, Tuple
 
 from . import __version__
 from .container import ContainerKind, detect_container
+from .diff import diff_result_dict, diff_sides, render_diff
 from .explain import explain as explain_format
 from .explain import explain_dict, render_explain
 from .find import (
@@ -238,6 +239,31 @@ def build_header_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_diff_parser() -> argparse.ArgumentParser:
+    """Parser for the ``diff`` subcommand (structural comparison of two files)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} diff",
+        description=(
+            "Compare two files' identified structure side by side: same format? "
+            "same magic offset? which decoded header fields agree or differ?"
+        ),
+    )
+    parser.add_argument(
+        "file_a",
+        help="first file to compare, or '-' for stdin",
+    )
+    parser.add_argument(
+        "file_b",
+        help="second file to compare, or '-' for stdin",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the comparison as one machine-readable JSON line (schema in README)",
+    )
+    return parser
+
+
 def build_peek_parser() -> argparse.ArgumentParser:
     """Parser for the ``peek`` subcommand."""
     parser = argparse.ArgumentParser(
@@ -413,6 +439,43 @@ def _header_file(argv: Sequence[str]) -> int:
     else:
         print(render_header(head, best, source=display))
     return EXIT_OK if best is not None else EXIT_UNIDENTIFIED
+
+
+def _diff_files(argv: Sequence[str]) -> int:
+    """Handle ``bytebite diff <fileA> <fileB> [--json]``. Returns an exit code.
+
+    Identifies both files and diffs their decoded header fields. Exit codes:
+    0 = both identified, 1 = at least one unknown, 2 = read/usage error. At most
+    one side may be stdin (``-``); reading stdin twice is a usage error.
+    """
+    normalized = [_STDIN_TOKEN if a == STDIN_ARG else a for a in argv]
+    args = build_diff_parser().parse_args(normalized)
+    source_a = STDIN_ARG if args.file_a == _STDIN_TOKEN else args.file_a
+    source_b = STDIN_ARG if args.file_b == _STDIN_TOKEN else args.file_b
+
+    if _is_stdin(source_a) and _is_stdin(source_b):
+        print(
+            f"{PROG}: diff: cannot read stdin ('-') for both files",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    head_a, code = _read_head(source_a)
+    if head_a is None:
+        return code
+    head_b, code = _read_head(source_b)
+    if head_b is None:
+        return code
+
+    a, b, field_diffs = diff_sides(
+        _display_name(source_a), head_a, _display_name(source_b), head_b
+    )
+
+    if args.json:
+        print(to_json(diff_result_dict(a, b, field_diffs)))
+    else:
+        print(render_diff(a, b, field_diffs))
+    return EXIT_OK if (a.identified and b.identified) else EXIT_UNIDENTIFIED
 
 
 def _explain_format(argv: Sequence[str]) -> int:
@@ -612,6 +675,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ``header`` prints only the parsed header (no hex art) — the tooling seam.
     if argv and argv[0] == "header":
         return _header_file(argv[1:])
+
+    # ``diff`` compares two files' identified structure side by side (issue #22).
+    if argv and argv[0] == "diff":
+        return _diff_files(argv[1:])
 
     # ``explain`` is the file-less reference path; route it the same way.
     if argv and argv[0] == "explain":
