@@ -107,6 +107,8 @@ bytebite <file>          # identify a file (working now)
 bytebite peek <file>     # annotated hex view of the header (working now)
 bytebite peek <file> -n 32  # show the first 32 bytes (default: 64)
 bytebite explain <format>   # print a format's magic + header layout (no file)
+bytebite header <file>      # print ONLY the parsed header (no hex art) — tooling seam
+bytebite header <file> --json  # parsed header as one machine-readable JSON line
 bytebite find --field width=1920 *.png  # search files by header field value
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
@@ -257,6 +259,36 @@ Exit codes: `0` at least one match, `1` no files matched, `2` bad/empty query.
 $ bytebite find --field 'width>=1000' --field height=1080 --json photo.png
 {"schema_version":2,"tool":"bytebite","action":"find","query":["width>=1000","height=1080"],"count":1,"matches":[{"path":"photo.png","format":"PNG image","fields":[{"name":"width","value":1920,"label":null},{"name":"height","value":1080,"label":null}]}]}
 ```
+
+## Parsed header only (`header`)
+
+When you want the decoded structure *without* the hex art or prose — to feed
+another tool or a script — use `bytebite header`. It reuses the same field
+decoding as `peek`, but emits only the identification plus the parsed fields.
+JSON is the natural shape here:
+
+```
+$ bytebite header mystery.png --json
+{"schema_version":2,"tool":"bytebite","source":"mystery.png","identified":true,"format":"PNG image","category":"image","magic":{"offset":0,"end":8,"hex":"\\x89PNG\\x0d\\x0a\\x1a\\x0a"},"fields":[{"name":"width","offset":16,"end":20,"size":4,"type":"u32be","value":1920,"label":null,"hex":"00000780","note":"pixels"}, ...]}
+```
+
+The text form is a clean, hex-free field list:
+
+```
+$ bytebite header mystery.png
+PNG image  (category: image)   — mystery.png
+     0x10–0x13  width       = 1920   # pixels
+     0x14–0x17  height      = 1080   # pixels
+          0x19  colour type = truecolour+alpha (RGBA) (6)
+     ...
+```
+
+- Reads from a path or stdin (`-`); `--quiet` prints just the format name.
+- If a format is identified but has no field-layout decoder yet, `fields` is an
+  empty list (exit `0`) — callers always get the same shape.
+- Exit codes match `identify`: `0` identified, `1` unknown, `2` error. (Unlike
+  `peek`, which is a viewer and exits `0` even on unknown input.)
+- Read-only and local-only — it never seeks past the header or executes anything.
 
 ## Explain a format
 
