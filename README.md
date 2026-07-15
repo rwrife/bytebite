@@ -110,6 +110,7 @@ bytebite explain <format>   # print a format's magic + header layout (no file)
 bytebite header <file>      # print ONLY the parsed header (no hex art) — tooling seam
 bytebite header <file> --json  # parsed header as one machine-readable JSON line
 bytebite find --field width=1920 *.png  # search files by header field value
+bytebite diff a.bin b.bin  # compare two files' identified structure side by side
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
 bytebite --list-formats  # list every known format + which have field detail
@@ -258,6 +259,44 @@ Exit codes: `0` at least one match, `1` no files matched, `2` bad/empty query.
 ```
 $ bytebite find --field 'width>=1000' --field height=1080 --json photo.png
 {"schema_version":2,"tool":"bytebite","action":"find","query":["width>=1000","height=1080"],"count":1,"matches":[{"path":"photo.png","format":"PNG image","fields":[{"name":"width","value":1920,"label":null},{"name":"height","value":1080,"label":null}]}]}
+```
+
+## Compare two files (`diff`)
+
+Got two mystery blobs and want to know *are these the same kind of thing, and
+where do they diverge?* `bytebite diff` identifies both and shows a side-by-side
+of what each one is plus a field-by-field comparison of their decoded headers:
+
+```
+$ bytebite diff a.png b.png
+diff  A: a.png   B: b.png
+
+  A  PNG image (image, 94%)
+  B  PNG image (image, 94%)
+  → same format
+
+  field         A                             B
+  -----------   ---------------------------   -
+= IHDR length   13                            13
+= chunk type    IHDR                          IHDR
+≠ width         1920                          640
+≠ height        1080                          480
+= bit depth     8                             8
+= colour type   truecolour+alpha (RGBA) (6)   truecolour+alpha (RGBA) (6)
+```
+
+Each row is marked `=` (equal), `≠` (differs), or `>`/`<` (present on only the A
+or B side). It reuses the same identification and field-decoding machinery as
+`identify`/`header` — no duplicate parsing.
+
+Exit codes: **0** = both identified, **1** = at least one unknown, **2** = error.
+At most one side may be stdin (`-`).
+
+`--json` emits one stable line:
+
+```
+$ bytebite diff a.png b.png --json
+{"schema_version":2,"tool":"bytebite","a":{...},"b":{...},"same_format":true,"same_magic_offset":true,"field_diffs":[{"field":"width","a":1920,"b":640,"a_label":null,"b_label":null,"a_hex":"00000780","b_hex":"00000280","equal":false}]}
 ```
 
 ## Parsed header only (`header`)
