@@ -111,6 +111,7 @@ bytebite header <file>      # print ONLY the parsed header (no hex art) — tool
 bytebite header <file> --json  # parsed header as one machine-readable JSON line
 bytebite find --field width=1920 *.png  # search files by header field value
 bytebite diff a.bin b.bin  # compare two files' identified structure side by side
+bytebite entropy <file>    # per-region Shannon-entropy strip (spot packed regions)
 bytebite <file> --json   # machine-readable JSON line (working now)
 bytebite <file> --quiet  # print only the format name, nothing if unknown
 bytebite --list-formats  # list every known format + which have field detail
@@ -297,6 +298,37 @@ At most one side may be stdin (`-`).
 ```
 $ bytebite diff a.png b.png --json
 {"schema_version":2,"tool":"bytebite","a":{...},"b":{...},"same_format":true,"same_magic_offset":true,"field_diffs":[{"field":"width","a":1920,"b":640,"a_label":null,"b_label":null,"a_hex":"00000780","b_hex":"00000280","equal":false}]}
+```
+
+## Entropy strip (`entropy`)
+
+Is this blob packed? `bytebite entropy` slices a file into fixed-size blocks
+(default 256B, `--block N`) and reports each block's Shannon entropy (0.0–8.0
+bits/byte) with an ANSI bar, so high-entropy (compressed/encrypted) regions jump
+out from low-entropy text, padding and headers — no full RE tool required. It
+reads the whole file (or stdin via `-`), respects `NO_COLOR`/non-TTY, and prints
+a heuristic verdict.
+
+```
+$ bytebite entropy firmware.bin
+bytebite entropy: firmware.bin (block 256B, 4 blocks)
+  000-100  1.42  ██████·························
+  100-200  7.98  ████████████████████████████████
+  200-300  7.97  ████████████████████████████████
+  300-400  0.31  █·······························
+
+overall 6.83 bits/byte — mixed
+```
+
+- `--json` emits `{schema_version, tool, source, block_size, blocks:[{offset,end,entropy}], overall, verdict}`.
+- `-q`/`--quiet` prints just the overall entropy and verdict (`6.83 mixed`).
+- Verdict heuristic: `looks compressed/encrypted` (≥7.5), `mostly text/structured` (≤5.0), else `mixed`.
+- Exit codes: `0` ok, `2` error (bad `--block` or unreadable source).
+- Read-only, local-only, pure stdlib — no new dependencies.
+
+```
+$ bytebite entropy packed.bin --json
+{"schema_version":2,"tool":"bytebite","source":"packed.bin","block_size":256,"blocks":[{"offset":0,"end":256,"entropy":7.98}],"overall":7.98,"verdict":"looks compressed/encrypted"}
 ```
 
 ## Parsed header only (`header`)
