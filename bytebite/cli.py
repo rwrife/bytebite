@@ -43,6 +43,12 @@ from typing import Optional, Sequence, Tuple
 from . import __version__
 from .container import ContainerKind, detect_container
 from .diff import diff_result_dict, diff_sides, render_diff
+from .entropy import (
+    DEFAULT_BLOCK,
+    entropy_result_dict,
+    render_entropy,
+    scan_entropy,
+)
 from .explain import explain as explain_format
 from .explain import explain_dict, render_explain
 from .find import (
@@ -264,6 +270,40 @@ def build_diff_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_entropy_parser() -> argparse.ArgumentParser:
+    """Parser for the ``entropy`` subcommand (per-region entropy strip)."""
+    parser = argparse.ArgumentParser(
+        prog=f"{PROG} entropy",
+        description=(
+            "Per-region Shannon-entropy strip: spot compressed/encrypted "
+            "(high-entropy) regions vs text/padding (low-entropy) at a glance."
+        ),
+    )
+    parser.add_argument(
+        "file",
+        help="path to the file to scan, or '-' for stdin",
+    )
+    parser.add_argument(
+        "--block",
+        type=int,
+        default=DEFAULT_BLOCK,
+        metavar="N",
+        help=f"bytes per entropy block (default: {DEFAULT_BLOCK})",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="emit the scan as one machine-readable JSON line (schema in README)",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="print only the overall entropy and verdict",
+    )
+    return parser
+
+
 def build_peek_parser() -> argparse.ArgumentParser:
     """Parser for the ``peek`` subcommand."""
     parser = argparse.ArgumentParser(
@@ -303,6 +343,31 @@ def _read_head(path: str) -> Tuple[Optional[bytes], int]:
     try:
         with open(path, "rb") as fh:
             return fh.read(HEAD_SIZE), EXIT_OK
+    except FileNotFoundError:
+        print(f"{PROG}: {path}: no such file", file=sys.stderr)
+    except IsADirectoryError:
+        print(f"{PROG}: {path}: is a directory", file=sys.stderr)
+    except OSError as exc:
+        print(f"{PROG}: {path}: {exc.strerror or exc}", file=sys.stderr)
+    return None, EXIT_ERROR
+
+
+def _read_all(path: str) -> Tuple[Optional[bytes], int]:
+    """Read a source in full, returning ``(data, exit_code)``.
+
+    Unlike :func:`_read_head`, this reads the whole blob (entropy needs every
+    byte). ``path`` may be ``-`` for standard input. On failure ``data`` is
+    ``None`` and a message has already been printed to stderr.
+    """
+    if _is_stdin(path):
+        try:
+            return sys.stdin.buffer.read(), EXIT_OK
+        except OSError as exc:  # pragma: no cover - stdin read errors are rare
+            print(f"{PROG}: <stdin>: {exc.strerror or exc}", file=sys.stderr)
+            return None, EXIT_ERROR
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(), EXIT_OK
     except FileNotFoundError:
         print(f"{PROG}: {path}: no such file", file=sys.stderr)
     except IsADirectoryError:
@@ -439,6 +504,39 @@ def _header_file(argv: Sequence[str]) -> int:
     else:
         print(render_header(head, best, source=display))
     return EXIT_OK if best is not None else EXIT_UNIDENTIFIED
+
+
+def _entropy_file(argv: Sequence[str]) -> int:
+    """Handle ``bytebite entropy <file> [--block N] [--json|--quiet]``.
+
+    ``<file>`` may be ``-`` (stdin). Reads the whole blob, scans it in blocks
+    and reports per-region entropy plus a heuristic verdict. Exit codes: 0 ok,
+    2 error (bad block size or unreadable source).
+    """
+    # A bare ``-`` (stdin) would be misread by argparse as an optional; swap in
+    # the sentinel as the other subcommands do.
+    normalized = [_STDIN_TOKEN if a == STDIN_ARG else a for a in argv]
+    args = build_entropy_parser().parse_args(normalized)
+
+    if args.block < 1:
+        print(f"{PROG}: entropy: --block must be >= 1", file=sys.stderr)
+        return EXIT_ERROR
+
+    path = STDIN_ARG if args.file == _STDIN_TOKEN else args.file
+    data, code = _read_all(path)
+    if data is None:
+        return code
+
+    source = STDIN_DISPLAY if _is_stdin(path) else path
+    report = scan_entropy(data, block_size=args.block, source=source)
+
+    if args.json:
+        print(to_json(entropy_result_dict(report)))
+    elif args.quiet:
+        print(f"{report.overall:.2f} {report.verdict}")
+    else:
+        print(render_entropy(report))
+    return EXIT_OK
 
 
 def _diff_files(argv: Sequence[str]) -> int:
@@ -679,6 +777,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # ``diff`` compares two files' identified structure side by side (issue #22).
     if argv and argv[0] == "diff":
         return _diff_files(argv[1:])
+
+    # ``entropy`` prints a per-region Shannon-entropy strip (issue #21).
+    if argv and argv[0] == "entropy":
+        return _entropy_file(argv[1:])
 
     # ``explain`` is the file-less reference path; route it the same way.
     if argv and argv[0] == "explain":
